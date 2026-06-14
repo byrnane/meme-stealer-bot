@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from .keyboards import back_keyboard, main_keyboard, settings_keyboard
 from .models import RichText, UserSettings
@@ -24,6 +24,7 @@ HELP_TEXT = (
     "Поддерживаются фото, GIF, видео и фото/видео-альбомы.\n"
     "Текст ждёт следующий мем 10 минут."
 )
+KEYBOARD_VERSION = 1
 
 
 def preview_text(value: RichText | None, limit: int = 80) -> str:
@@ -58,38 +59,45 @@ class ScreenManager:
         self.storage = storage
         self.user_id = user_id
 
-    async def show_main(self, *, force_new: bool = False) -> None:
-        settings = await self.storage.get_settings(self.user_id)
-        if force_new or settings.screen_message_id is None:
-            await self.replace(MAIN_TEXT, reply_markup=main_keyboard())
-            return
+    async def show_main(self) -> None:
+        await self.ensure_keyboard()
         await self.show(MAIN_TEXT)
 
     async def show_settings(self) -> None:
+        await self.ensure_keyboard()
         settings = await self.storage.get_settings(self.user_id)
         await self.show("Настройки публикации:", reply_markup=settings_keyboard(settings))
 
     async def show_status(self) -> None:
+        await self.ensure_keyboard()
         settings = await self.storage.get_settings(self.user_id)
         text = await build_status_text(self.storage, settings)
         await self.show(text, reply_markup=back_keyboard())
 
     async def show_help(self) -> None:
+        await self.ensure_keyboard()
         await self.show(HELP_TEXT, reply_markup=back_keyboard())
 
     async def begin_input(self, text: str) -> None:
-        await self.replace(text, reply_markup=ReplyKeyboardRemove())
+        await self.ensure_keyboard()
+        await self.show(text, reply_markup=back_keyboard())
+
+    async def ensure_keyboard(self) -> None:
+        settings = await self.storage.get_settings(self.user_id)
+        if settings.screen_message_id is not None and settings.keyboard_version >= KEYBOARD_VERSION:
+            return
+        await self.replace(MAIN_TEXT, reply_markup=main_keyboard())
+        await self.storage.set_keyboard_version(self.user_id, KEYBOARD_VERSION)
 
     async def show(
         self,
         text: str,
         *,
         reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
-        force_new: bool = False,
     ) -> None:
         settings = await self.storage.get_settings(self.user_id)
         message_id = settings.screen_message_id
-        if message_id and not force_new and not isinstance(reply_markup, ReplyKeyboardMarkup):
+        if message_id:
             try:
                 await self.bot.edit_message_text(
                     chat_id=self.user_id,
@@ -107,9 +115,7 @@ class ScreenManager:
         self,
         text: str,
         *,
-        reply_markup: (
-            InlineKeyboardMarkup | ReplyKeyboardMarkup | ReplyKeyboardRemove | None
-        ) = None,
+        reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
     ) -> None:
         settings = await self.storage.get_settings(self.user_id)
         old_message_id = settings.screen_message_id

@@ -13,7 +13,7 @@ from aiogram.types import CallbackQuery, Message, MessageOriginChannel
 
 from .captions import caption_is_too_long, combine_rich_text, plain_rich_text
 from .collector import AlbumCollector
-from .keyboards import CANCEL_BUTTON, HELP_BUTTON, SETTINGS_BUTTON, STATUS_BUTTON
+from .keyboards import HELP_BUTTON, MAIN_BUTTON, SETTINGS_BUTTON, STATUS_BUTTON
 from .models import Draft, RichText
 from .publishing import Publisher, media_item_from_message
 from .screens import ScreenManager
@@ -59,7 +59,7 @@ class MemeStealerApp:
         self.router.message.register(self.menu, owner, Command("menu"))
         self.router.message.register(self.settings, owner, F.text == SETTINGS_BUTTON)
         self.router.message.register(self.status, owner, F.text == STATUS_BUTTON)
-        self.router.message.register(self.cancel, owner, F.text == CANCEL_BUTTON)
+        self.router.message.register(self.menu, owner, F.text == MAIN_BUTTON)
         self.router.message.register(self.help, owner, F.text == HELP_BUTTON)
         self.router.callback_query.register(
             self.screen_callback, owner, F.data.startswith("screen:")
@@ -83,41 +83,36 @@ class MemeStealerApp:
         self.router.callback_query.register(self.unauthorized_callback)
 
     async def start(self, message: Message, state: FSMContext) -> None:
-        active_state = await state.get_state()
         await state.clear()
-        await self.screens.show_main(force_new=active_state is not None)
+        await self.screens.show_main()
+        await self._delete_trigger(message)
 
     async def menu(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        await self.screens.show_main(force_new=True)
+        await self.screens.show_main()
+        await self._delete_trigger(message)
 
     async def cancel(self, message: Message, state: FSMContext) -> None:
         self._cancel_pending_expiry()
         await state.clear()
         await self.storage.clear_pending_text(self.owner_id)
-        await self.storage.clear_drafts(self.owner_id)
-        await self.screens.show_main(force_new=True)
+        await self.screens.show_main()
+        await self._delete_trigger(message)
 
     async def settings(self, message: Message, state: FSMContext) -> None:
-        active_state = await state.get_state()
         await state.clear()
-        if active_state is not None:
-            await self.screens.show_main(force_new=True)
         await self.screens.show_settings()
+        await self._delete_trigger(message)
 
     async def status(self, message: Message, state: FSMContext) -> None:
-        active_state = await state.get_state()
         await state.clear()
-        if active_state is not None:
-            await self.screens.show_main(force_new=True)
         await self.screens.show_status()
+        await self._delete_trigger(message)
 
     async def help(self, message: Message, state: FSMContext) -> None:
-        active_state = await state.get_state()
         await state.clear()
-        if active_state is not None:
-            await self.screens.show_main(force_new=True)
         await self.screens.show_help()
+        await self._delete_trigger(message)
 
     async def screen_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
         if callback.data == "screen:main":
@@ -150,6 +145,7 @@ class MemeStealerApp:
             await self.screens.show_settings()
 
     async def receive_channel(self, message: Message, state: FSMContext) -> None:
+        await self._delete_trigger(message)
         channel_ref: int | str | None = None
         if isinstance(message.forward_origin, MessageOriginChannel):
             channel_ref = message.forward_origin.chat.id
@@ -160,12 +156,17 @@ class MemeStealerApp:
             except ValueError:
                 channel_ref = value if value.startswith("@") else f"@{value}"
         if channel_ref is None:
-            await message.answer("Не вижу канал. Перешли пост из него или отправь @username / ID.")
+            await self.screens.begin_input(
+                "Не вижу канал.\n\nПерешли пост из него или отправь @username / числовой ID."
+            )
             return
         try:
             chat = await self.bot.get_chat(channel_ref)
             if chat.type != ChatType.CHANNEL:
-                await message.answer("Это не канал.")
+                await self.screens.begin_input(
+                    "Это не канал.\n\n"
+                    "Перешли пост из канала или отправь его @username / числовой ID."
+                )
                 return
             me = await self.bot.get_me()
             membership = await self.bot.get_chat_member(chat.id, me.id)
@@ -174,25 +175,31 @@ class MemeStealerApp:
                 and bool(getattr(membership, "can_post_messages", False))
             )
             if not allowed:
-                await message.answer("Добавь бота администратором канала с правом публикации.")
+                await self.screens.begin_input(
+                    "У бота нет права публикации.\n\n"
+                    "Добавь его администратором канала с правом публикации и попробуй снова."
+                )
                 return
         except (TelegramBadRequest, TelegramForbiddenError):
-            await message.answer("Не удалось открыть канал. Проверь адрес и права бота.")
+            await self.screens.begin_input(
+                "Не удалось открыть канал.\n\nПроверь адрес и права бота, затем попробуй снова."
+            )
             return
         await self.storage.set_channel(self.owner_id, chat.id, chat.title or str(chat.id))
         await state.clear()
-        await self.screens.show_main(force_new=True)
-        await message.answer(f"Канал «{chat.title}» сохранён.")
+        await self.screens.show_settings()
 
     async def receive_signature(self, message: Message, state: FSMContext) -> None:
+        await self._delete_trigger(message)
         signature = plain_rich_text(message.text or "", message.entities)
         if caption_is_too_long(signature):
-            await message.answer("Подпись длиннее 1024 символов. Сократи её.")
+            await self.screens.begin_input(
+                "Подпись длиннее 1024 символов.\n\nСократи её и отправь ещё раз."
+            )
             return
         await self.storage.set_signature(self.owner_id, signature)
         await state.clear()
-        await self.screens.show_main(force_new=True)
-        await message.answer("Общая подпись сохранена.")
+        await self.screens.show_settings()
 
     async def receive_text(self, message: Message) -> None:
         text = plain_rich_text(message.text or "", message.entities)
@@ -282,6 +289,12 @@ class MemeStealerApp:
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest:
+            pass
+
+    async def _delete_trigger(self, message: Message) -> None:
+        try:
+            await message.delete()
+        except (TelegramBadRequest, TelegramForbiddenError):
             pass
 
     async def unsupported(self, message: Message) -> None:

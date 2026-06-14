@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 OWNER_COMMANDS = [
     BotCommand(command="start", description="Открыть главное меню"),
     BotCommand(command="settings", description="Настройки публикации"),
-    BotCommand(command="cancel", description="Отменить текущую операцию"),
+    BotCommand(command="cancel", description="Сбросить текущий ввод"),
 ]
 
 

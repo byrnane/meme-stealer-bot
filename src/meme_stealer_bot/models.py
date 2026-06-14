@@ -61,3 +61,4 @@ class UserSettings:
     signature: RichText | None = None
     instant_publish: bool = False
     screen_message_id: int | None = None
+    keyboard_version: int = 0
