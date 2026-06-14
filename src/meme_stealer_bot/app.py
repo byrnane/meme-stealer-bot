@@ -84,35 +84,33 @@ class MemeStealerApp:
 
     async def start(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        await self.screens.show_main()
-        await self._delete_trigger(message)
+        await self.screens.show_main(new=True)
 
     async def menu(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        await self.screens.show_main()
-        await self._delete_trigger(message)
+        is_command = self._is_command(message)
+        await self.screens.show_main(new=is_command)
 
     async def cancel(self, message: Message, state: FSMContext) -> None:
         self._cancel_pending_expiry()
         await state.clear()
         await self.storage.clear_pending_text(self.owner_id)
-        await self.screens.show_main()
-        await self._delete_trigger(message)
+        await self.screens.show_main(new=True)
 
     async def settings(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        await self.screens.show_settings()
-        await self._delete_trigger(message)
+        is_command = self._is_command(message)
+        await self.screens.show_settings(new=is_command)
 
     async def status(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        await self.screens.show_status()
-        await self._delete_trigger(message)
+        is_command = self._is_command(message)
+        await self.screens.show_status(new=is_command)
 
     async def help(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        await self.screens.show_help()
-        await self._delete_trigger(message)
+        is_command = self._is_command(message)
+        await self.screens.show_help(new=is_command)
 
     async def screen_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
         if callback.data == "screen:main":
@@ -145,7 +143,6 @@ class MemeStealerApp:
             await self.screens.show_settings()
 
     async def receive_channel(self, message: Message, state: FSMContext) -> None:
-        await self._delete_trigger(message)
         channel_ref: int | str | None = None
         if isinstance(message.forward_origin, MessageOriginChannel):
             channel_ref = message.forward_origin.chat.id
@@ -190,7 +187,6 @@ class MemeStealerApp:
         await self.screens.show_settings()
 
     async def receive_signature(self, message: Message, state: FSMContext) -> None:
-        await self._delete_trigger(message)
         signature = plain_rich_text(message.text or "", message.entities)
         if caption_is_too_long(signature):
             await self.screens.begin_input(
@@ -291,11 +287,9 @@ class MemeStealerApp:
         except TelegramBadRequest:
             pass
 
-    async def _delete_trigger(self, message: Message) -> None:
-        try:
-            await message.delete()
-        except (TelegramBadRequest, TelegramForbiddenError):
-            pass
+    @staticmethod
+    def _is_command(message: Message) -> bool:
+        return bool(message.text and message.text.startswith("/"))
 
     async def unsupported(self, message: Message) -> None:
         await message.answer("Поддерживаются только фото, GIF, видео и фото/видео-альбомы.")

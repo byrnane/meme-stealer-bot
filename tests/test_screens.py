@@ -60,6 +60,23 @@ async def test_screen_manager_keeps_screen_when_content_is_unchanged(tmp_path) -
     assert (await storage.get_settings(1)).screen_message_id == 42
 
 
+async def test_direct_command_screen_is_new_and_does_not_delete_old_screen(tmp_path) -> None:
+    storage = Storage(tmp_path / "bot.sqlite3")
+    await storage.initialize()
+    await storage.set_screen_message_id(1, 42)
+    await storage.set_keyboard_version(1, KEYBOARD_VERSION)
+    bot = AsyncMock()
+    bot.send_message.return_value = SimpleNamespace(message_id=43)
+    screens = ScreenManager(bot, storage, 1)
+
+    await screens.show_main(new=True)
+
+    bot.send_message.assert_awaited_once()
+    bot.edit_message_text.assert_not_awaited()
+    bot.delete_message.assert_not_awaited()
+    assert (await storage.get_settings(1)).screen_message_id == 43
+
+
 async def test_begin_input_edits_screen_without_hiding_reply_keyboard(tmp_path) -> None:
     storage = Storage(tmp_path / "bot.sqlite3")
     await storage.initialize()

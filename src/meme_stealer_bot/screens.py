@@ -24,7 +24,7 @@ HELP_TEXT = (
     "Поддерживаются фото, GIF, видео и фото/видео-альбомы.\n"
     "Текст ждёт следующий мем 10 минут."
 )
-KEYBOARD_VERSION = 1
+KEYBOARD_VERSION = 2
 
 
 def preview_text(value: RichText | None, limit: int = 80) -> str:
@@ -59,24 +59,28 @@ class ScreenManager:
         self.storage = storage
         self.user_id = user_id
 
-    async def show_main(self) -> None:
+    async def show_main(self, *, new: bool = False) -> None:
+        if new:
+            await self.send_new(MAIN_TEXT, reply_markup=main_keyboard())
+            await self.storage.set_keyboard_version(self.user_id, KEYBOARD_VERSION)
+            return
         await self.ensure_keyboard()
         await self.show(MAIN_TEXT)
 
-    async def show_settings(self) -> None:
+    async def show_settings(self, *, new: bool = False) -> None:
         await self.ensure_keyboard()
         settings = await self.storage.get_settings(self.user_id)
-        await self.show("Настройки публикации:", reply_markup=settings_keyboard(settings))
+        await self.show("Настройки публикации:", reply_markup=settings_keyboard(settings), new=new)
 
-    async def show_status(self) -> None:
+    async def show_status(self, *, new: bool = False) -> None:
         await self.ensure_keyboard()
         settings = await self.storage.get_settings(self.user_id)
         text = await build_status_text(self.storage, settings)
-        await self.show(text, reply_markup=back_keyboard())
+        await self.show(text, reply_markup=back_keyboard(), new=new)
 
-    async def show_help(self) -> None:
+    async def show_help(self, *, new: bool = False) -> None:
         await self.ensure_keyboard()
-        await self.show(HELP_TEXT, reply_markup=back_keyboard())
+        await self.show(HELP_TEXT, reply_markup=back_keyboard(), new=new)
 
     async def begin_input(self, text: str) -> None:
         await self.ensure_keyboard()
@@ -94,7 +98,11 @@ class ScreenManager:
         text: str,
         *,
         reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
+        new: bool = False,
     ) -> None:
+        if new:
+            await self.send_new(text, reply_markup=reply_markup)
+            return
         settings = await self.storage.get_settings(self.user_id)
         message_id = settings.screen_message_id
         if message_id:
@@ -110,6 +118,15 @@ class ScreenManager:
                 if "message is not modified" in error.message.lower():
                     return
         await self.replace(text, reply_markup=reply_markup)
+
+    async def send_new(
+        self,
+        text: str,
+        *,
+        reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
+    ) -> None:
+        message = await self.bot.send_message(self.user_id, text, reply_markup=reply_markup)
+        await self.storage.set_screen_message_id(self.user_id, message.message_id)
 
     async def replace(
         self,
