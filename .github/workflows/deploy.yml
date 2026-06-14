@@ -37,8 +37,27 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     environment: production
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_HOST_KEY_FINGERPRINT: ${{ vars.DEPLOY_HOST_KEY_FINGERPRINT }}
     steps:
       - uses: actions/checkout@v5
+
+      - name: Validate deployment configuration
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          OWNER_ID: ${{ secrets.OWNER_ID }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_PORT"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_HOST_KEY_FINGERPRINT"
+          test -n "$BOT_TOKEN"
+          test -n "$OWNER_ID"
+          test -n "$LOG_LEVEL"
 
       - name: Configure SSH
         env:
@@ -47,9 +66,9 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -t ed25519 31.77.129.8 > ~/.ssh/known_hosts
+          ssh-keyscan -p "$DEPLOY_PORT" -t ed25519 "$DEPLOY_HOST" > ~/.ssh/known_hosts
           test "$(ssh-keygen -lf ~/.ssh/known_hosts | awk '{print $2}')" = \
-            "SHA256:fvlYQ2P2IRvminEO58WIzlygJHMBQK6lqga6BA5lNK8"
+            "$DEPLOY_HOST_KEY_FINGERPRINT"
 
       - name: Build release archive
         run: |
@@ -64,10 +83,24 @@ jobs:
             --exclude=backups \
             -czf /tmp/meme-stealer-bot.tar.gz .
 
+      - name: Build environment file
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          OWNER_ID: ${{ secrets.OWNER_ID }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+        run: |
+          umask 077
+          printf 'BOT_TOKEN=%s\nOWNER_ID=%s\nDATABASE_PATH=data/bot.sqlite3\nLOG_LEVEL=%s\n' \
+            "$BOT_TOKEN" "$OWNER_ID" "$LOG_LEVEL" > /tmp/meme-stealer-bot.env
+
       - name: Upload and deploy
         run: |
-          ssh -i ~/.ssh/deploy_key meme-deploy@31.77.129.8 "mkdir -p releases"
-          scp -i ~/.ssh/deploy_key /tmp/meme-stealer-bot.tar.gz \
-            "meme-deploy@31.77.129.8:releases/${GITHUB_SHA}.tar.gz"
-          ssh -i ~/.ssh/deploy_key meme-deploy@31.77.129.8 \
-            "/home/meme-deploy/bin/deploy-meme-stealer-bot ${GITHUB_SHA}"
+          target="${DEPLOY_USER}@${DEPLOY_HOST}"
+          ssh -p "$DEPLOY_PORT" -i ~/.ssh/deploy_key "$target" "mkdir -p releases"
+          scp -P "$DEPLOY_PORT" -i ~/.ssh/deploy_key \
+            /tmp/meme-stealer-bot.tar.gz /tmp/meme-stealer-bot.env \
+            "${target}:releases/"
+          ssh -p "$DEPLOY_PORT" -i ~/.ssh/deploy_key "$target" \
+            "mv releases/meme-stealer-bot.tar.gz releases/${GITHUB_SHA}.tar.gz && \
+             mv releases/meme-stealer-bot.env releases/${GITHUB_SHA}.env && \
+             /home/meme-deploy/bin/deploy-meme-stealer-bot ${GITHUB_SHA}"

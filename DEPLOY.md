@@ -46,11 +46,29 @@ Keep `.env` only on the server. Do not commit it.
 ## GitHub Actions deployment
 
 Pushes to `main` run tests and deploy to the production VPS. The workflow needs
-the `DEPLOY_SSH_KEY` secret in the `production` GitHub environment.
+these values in the `production` GitHub environment:
+
+Secrets:
+
+- `DEPLOY_SSH_KEY`;
+- `BOT_TOKEN`;
+- `OWNER_ID`.
+
+Variables:
+
+- `DEPLOY_HOST`;
+- `DEPLOY_PORT`;
+- `DEPLOY_USER`;
+- `DEPLOY_HOST_KEY_FINGERPRINT`;
+- `LOG_LEVEL`.
 
 The VPS uses a dedicated `meme-deploy` user and a hardened systemd service. The
 user can upload releases and restart only `meme-stealer-bot.service`; it does
 not have general root or Docker access.
+
+The workflow creates the server `.env` from the GitHub Environment values on
+every deployment. After changing a secret or variable, manually run the
+`Deploy` workflow to apply it.
 
 ## Update
 
