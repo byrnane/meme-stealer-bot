@@ -13,9 +13,10 @@ from aiogram.types import CallbackQuery, Message, MessageOriginChannel
 
 from .captions import caption_is_too_long, combine_rich_text, plain_rich_text
 from .collector import AlbumCollector
-from .keyboards import settings_keyboard
+from .keyboards import CANCEL_BUTTON, HELP_BUTTON, SETTINGS_BUTTON, STATUS_BUTTON
 from .models import Draft, RichText
 from .publishing import Publisher, media_item_from_message
+from .screens import ScreenManager
 from .states import SettingsState
 from .storage import Storage
 
@@ -39,6 +40,7 @@ class MemeStealerApp:
         self.storage = storage
         self.owner_id = owner_id
         self.publisher = Publisher(bot)
+        self.screens = ScreenManager(bot, storage, owner_id)
         self.router = Router(name="meme-stealer")
         self.album_collector = AlbumCollector(self.process_media_messages)
         self._pending_expiry_task: asyncio.Task | None = None
@@ -52,6 +54,16 @@ class MemeStealerApp:
         self.router.message.register(self.start, owner, CommandStart())
         self.router.message.register(self.cancel, owner, Command("cancel"))
         self.router.message.register(self.settings, owner, Command("settings"))
+        self.router.message.register(self.status, owner, Command("status"))
+        self.router.message.register(self.help, owner, Command("help"))
+        self.router.message.register(self.menu, owner, Command("menu"))
+        self.router.message.register(self.settings, owner, F.text == SETTINGS_BUTTON)
+        self.router.message.register(self.status, owner, F.text == STATUS_BUTTON)
+        self.router.message.register(self.cancel, owner, F.text == CANCEL_BUTTON)
+        self.router.message.register(self.help, owner, F.text == HELP_BUTTON)
+        self.router.callback_query.register(
+            self.screen_callback, owner, F.data.startswith("screen:")
+        )
         self.router.callback_query.register(
             self.settings_callback, owner, F.data.startswith("settings:")
         )
@@ -70,34 +82,61 @@ class MemeStealerApp:
         self.router.message.register(self.unauthorized)
         self.router.callback_query.register(self.unauthorized_callback)
 
-    async def start(self, message: Message) -> None:
-        await message.answer(
-            "Пришли текст, затем мем. Я очищу репост и подготовлю публикацию.\n"
-            "Настройки: /settings. Сбросить текущую операцию: /cancel."
-        )
+    async def start(self, message: Message, state: FSMContext) -> None:
+        active_state = await state.get_state()
+        await state.clear()
+        await self.screens.show_main(force_new=active_state is not None)
+
+    async def menu(self, message: Message, state: FSMContext) -> None:
+        await state.clear()
+        await self.screens.show_main(force_new=True)
 
     async def cancel(self, message: Message, state: FSMContext) -> None:
         self._cancel_pending_expiry()
         await state.clear()
         await self.storage.clear_pending_text(self.owner_id)
         await self.storage.clear_drafts(self.owner_id)
-        await message.answer("Текущий текст, черновики и настройка сброшены.")
+        await self.screens.show_main(force_new=True)
 
     async def settings(self, message: Message, state: FSMContext) -> None:
+        active_state = await state.get_state()
         await state.clear()
-        settings = await self.storage.get_settings(self.owner_id)
-        await message.answer("Настройки публикации:", reply_markup=settings_keyboard(settings))
+        if active_state is not None:
+            await self.screens.show_main(force_new=True)
+        await self.screens.show_settings()
+
+    async def status(self, message: Message, state: FSMContext) -> None:
+        active_state = await state.get_state()
+        await state.clear()
+        if active_state is not None:
+            await self.screens.show_main(force_new=True)
+        await self.screens.show_status()
+
+    async def help(self, message: Message, state: FSMContext) -> None:
+        active_state = await state.get_state()
+        await state.clear()
+        if active_state is not None:
+            await self.screens.show_main(force_new=True)
+        await self.screens.show_help()
+
+    async def screen_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
+        if callback.data == "screen:main":
+            await state.clear()
+            await self.screens.show_main()
+        await callback.answer()
 
     async def settings_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
         action = callback.data or ""
         if action == "settings:channel":
             await state.set_state(SettingsState.waiting_for_channel)
-            await callback.message.answer(
+            await self.screens.begin_input(
                 "Перешли любой пост из целевого канала или отправь его @username / числовой ID."
             )
         elif action == "settings:signature":
             await state.set_state(SettingsState.waiting_for_signature)
-            await callback.message.answer("Отправь новую общую подпись одним текстовым сообщением.")
+            await self.screens.begin_input(
+                "Отправь новую общую подпись одним текстовым сообщением."
+            )
         elif action == "settings:signature:clear":
             await self.storage.set_signature(self.owner_id, None)
             await callback.answer("Общая подпись очищена.")
@@ -105,11 +144,10 @@ class MemeStealerApp:
             instant = await self.storage.toggle_publish_mode(self.owner_id)
             text = "Теперь публикую мгновенно." if instant else "Теперь показываю превью."
             await callback.answer(text)
-        settings = await self.storage.get_settings(self.owner_id)
-        try:
-            await callback.message.edit_reply_markup(reply_markup=settings_keyboard(settings))
-        except TelegramBadRequest:
-            pass
+        if action in {"settings:channel", "settings:signature"}:
+            await callback.answer()
+        else:
+            await self.screens.show_settings()
 
     async def receive_channel(self, message: Message, state: FSMContext) -> None:
         channel_ref: int | str | None = None
@@ -143,6 +181,7 @@ class MemeStealerApp:
             return
         await self.storage.set_channel(self.owner_id, chat.id, chat.title or str(chat.id))
         await state.clear()
+        await self.screens.show_main(force_new=True)
         await message.answer(f"Канал «{chat.title}» сохранён.")
 
     async def receive_signature(self, message: Message, state: FSMContext) -> None:
@@ -152,6 +191,7 @@ class MemeStealerApp:
             return
         await self.storage.set_signature(self.owner_id, signature)
         await state.clear()
+        await self.screens.show_main(force_new=True)
         await message.answer("Общая подпись сохранена.")
 
     async def receive_text(self, message: Message) -> None:

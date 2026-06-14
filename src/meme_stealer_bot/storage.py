@@ -25,7 +25,8 @@ class Storage:
                     channel_id INTEGER,
                     channel_title TEXT,
                     signature_json TEXT,
-                    instant_publish INTEGER NOT NULL DEFAULT 0
+                    instant_publish INTEGER NOT NULL DEFAULT 0,
+                    screen_message_id INTEGER
                 );
                 CREATE TABLE IF NOT EXISTS pending_text (
                     user_id INTEGER PRIMARY KEY,
@@ -41,13 +42,19 @@ class Storage:
                 );
                 """
             )
+            columns = {
+                row[1] for row in await (await db.execute("PRAGMA table_info(settings)")).fetchall()
+            }
+            if "screen_message_id" not in columns:
+                await db.execute("ALTER TABLE settings ADD COLUMN screen_message_id INTEGER")
             await db.commit()
 
     async def get_settings(self, user_id: int) -> UserSettings:
         async with aiosqlite.connect(self.path) as db:
             row = await (
                 await db.execute(
-                    "SELECT channel_id, channel_title, signature_json, instant_publish "
+                    "SELECT channel_id, channel_title, signature_json, instant_publish, "
+                    "screen_message_id "
                     "FROM settings WHERE user_id = ?",
                     (user_id,),
                 )
@@ -60,6 +67,7 @@ class Storage:
             channel_title=row[1],
             signature=RichText.from_dict(json.loads(row[2])) if row[2] else None,
             instant_publish=bool(row[3]),
+            screen_message_id=row[4],
         )
 
     async def _ensure_settings(self, db: aiosqlite.Connection, user_id: int) -> None:
@@ -95,6 +103,15 @@ class Storage:
             await db.commit()
         return new_value
 
+    async def set_screen_message_id(self, user_id: int, message_id: int | None) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await self._ensure_settings(db, user_id)
+            await db.execute(
+                "UPDATE settings SET screen_message_id = ? WHERE user_id = ?",
+                (message_id, user_id),
+            )
+            await db.commit()
+
     async def set_pending_text(self, user_id: int, text: RichText) -> None:
         expires = datetime.now(UTC) + PENDING_TEXT_TTL
         value = json.dumps(text.to_dict(), ensure_ascii=False)
@@ -121,6 +138,23 @@ class Storage:
             await self.clear_pending_text(user_id)
             return None
         return RichText.from_dict(json.loads(row[0]))
+
+    async def get_pending_text_details(self, user_id: int) -> tuple[RichText, datetime] | None:
+        async with aiosqlite.connect(self.path) as db:
+            row = await (
+                await db.execute(
+                    "SELECT rich_text_json, expires_at FROM pending_text WHERE user_id = ?",
+                    (user_id,),
+                )
+            ).fetchone()
+        if not row:
+            return None
+        expires_at = datetime.fromisoformat(row[1])
+        if expires_at <= datetime.now(UTC):
+            await self.clear_pending_text(user_id)
+            return None
+        text = RichText.from_dict(json.loads(row[0]))
+        return (text, expires_at) if text else None
 
     async def pop_pending_text(self, user_id: int) -> RichText | None:
         text = await self.get_pending_text(user_id)
@@ -172,3 +206,10 @@ class Storage:
         async with aiosqlite.connect(self.path) as db:
             await db.execute("DELETE FROM drafts WHERE user_id = ?", (user_id,))
             await db.commit()
+
+    async def count_drafts(self, user_id: int) -> int:
+        async with aiosqlite.connect(self.path) as db:
+            row = await (
+                await db.execute("SELECT COUNT(*) FROM drafts WHERE user_id = ?", (user_id,))
+            ).fetchone()
+        return int(row[0])

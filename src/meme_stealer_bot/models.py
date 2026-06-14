@@ -60,3 +60,4 @@ class UserSettings:
     channel_title: str | None = None
     signature: RichText | None = None
     instant_publish: bool = False
+    screen_message_id: int | None = None

@@ -6,6 +6,7 @@ import logging
 from aiogram import Bot
 
 from .app import create_dispatcher
+from .bot_setup import configure_owner_menu
 from .config import Config
 from .storage import Storage
 
@@ -19,6 +20,7 @@ async def main() -> None:
     storage = Storage(config.database_path)
     await storage.initialize()
     bot = Bot(config.bot_token)
+    await configure_owner_menu(bot, config.owner_id)
     dispatcher = create_dispatcher(bot, storage, config.owner_id)
     try:
         await dispatcher.start_polling(bot)
