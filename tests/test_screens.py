@@ -39,7 +39,7 @@ async def test_screen_manager_recreates_deleted_screen(tmp_path) -> None:
     await screens.show_help()
 
     assert (await storage.get_settings(1)).screen_message_id == 43
-    bot.delete_message.assert_awaited_once_with(1, 42)
+    bot.delete_message.assert_not_awaited()
 
 
 async def test_screen_manager_keeps_screen_when_content_is_unchanged(tmp_path) -> None:
@@ -60,7 +60,7 @@ async def test_screen_manager_keeps_screen_when_content_is_unchanged(tmp_path) -
     assert (await storage.get_settings(1)).screen_message_id == 42
 
 
-async def test_direct_command_screen_is_new_and_does_not_delete_old_screen(tmp_path) -> None:
+async def test_existing_screen_is_edited_and_old_screen_is_not_deleted(tmp_path) -> None:
     storage = Storage(tmp_path / "bot.sqlite3")
     await storage.initialize()
     await storage.set_screen_message_id(1, 42)
@@ -69,12 +69,12 @@ async def test_direct_command_screen_is_new_and_does_not_delete_old_screen(tmp_p
     bot.send_message.return_value = SimpleNamespace(message_id=43)
     screens = ScreenManager(bot, storage, 1)
 
-    await screens.show_main(new=True)
+    await screens.show_main()
 
-    bot.send_message.assert_awaited_once()
-    bot.edit_message_text.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+    bot.edit_message_text.assert_awaited_once()
     bot.delete_message.assert_not_awaited()
-    assert (await storage.get_settings(1)).screen_message_id == 43
+    assert (await storage.get_settings(1)).screen_message_id == 42
 
 
 async def test_begin_input_edits_screen_without_hiding_reply_keyboard(tmp_path) -> None:
@@ -107,6 +107,20 @@ async def test_existing_user_gets_reply_keyboard_restored_once(tmp_path) -> None
     settings = await storage.get_settings(1)
     assert settings.screen_message_id == 43
     assert settings.keyboard_version == KEYBOARD_VERSION
+
+
+async def test_first_screen_is_created_without_deleting_anything(tmp_path) -> None:
+    storage = Storage(tmp_path / "bot.sqlite3")
+    await storage.initialize()
+    bot = AsyncMock()
+    bot.send_message.return_value = SimpleNamespace(message_id=43)
+    screens = ScreenManager(bot, storage, 1)
+
+    await screens.show_main()
+
+    assert bot.send_message.await_count == 1
+    bot.delete_message.assert_not_awaited()
+    assert (await storage.get_settings(1)).screen_message_id == 43
 
 
 async def test_full_status_contains_settings_pending_text_and_drafts(tmp_path) -> None:

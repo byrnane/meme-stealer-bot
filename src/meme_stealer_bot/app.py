@@ -84,33 +84,29 @@ class MemeStealerApp:
 
     async def start(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        await self.screens.show_main(new=True)
+        await self.screens.show_main()
 
     async def menu(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        is_command = self._is_command(message)
-        await self.screens.show_main(new=is_command)
+        await self.screens.show_main()
 
     async def cancel(self, message: Message, state: FSMContext) -> None:
         self._cancel_pending_expiry()
         await state.clear()
         await self.storage.clear_pending_text(self.owner_id)
-        await self.screens.show_main(new=True)
+        await self.screens.show_main()
 
     async def settings(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        is_command = self._is_command(message)
-        await self.screens.show_settings(new=is_command)
+        await self.screens.show_settings()
 
     async def status(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        is_command = self._is_command(message)
-        await self.screens.show_status(new=is_command)
+        await self.screens.show_status()
 
     async def help(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        is_command = self._is_command(message)
-        await self.screens.show_help(new=is_command)
+        await self.screens.show_help()
 
     async def screen_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
         if callback.data == "screen:main":
@@ -286,10 +282,6 @@ class MemeStealerApp:
             await callback.message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest:
             pass
-
-    @staticmethod
-    def _is_command(message: Message) -> bool:
-        return bool(message.text and message.text.startswith("/"))
 
     async def unsupported(self, message: Message) -> None:
         await message.answer("Поддерживаются только фото, GIF, видео и фото/видео-альбомы.")

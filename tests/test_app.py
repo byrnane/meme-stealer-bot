@@ -33,7 +33,7 @@ async def test_start_command_creates_new_screen_without_deleting_user_message(tm
 
     await app.start(message, state)
 
-    app.screens.show_main.assert_awaited_once_with(new=True)
+    app.screens.show_main.assert_awaited_once_with()
     message.delete.assert_not_awaited()
 
 
@@ -47,5 +47,5 @@ async def test_reply_keyboard_button_edits_screen_without_deleting_user_message(
 
     await app.menu(message, state)
 
-    app.screens.show_main.assert_awaited_once_with(new=False)
+    app.screens.show_main.assert_awaited_once_with()
     message.delete.assert_not_awaited()
