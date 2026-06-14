@@ -26,8 +26,7 @@ class Storage:
                     channel_title TEXT,
                     signature_json TEXT,
                     instant_publish INTEGER NOT NULL DEFAULT 0,
-                    screen_message_id INTEGER,
-                    keyboard_version INTEGER NOT NULL DEFAULT 0
+                    reply_keyboard_removed INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS pending_text (
                     user_id INTEGER PRIMARY KEY,
@@ -46,11 +45,10 @@ class Storage:
             columns = {
                 row[1] for row in await (await db.execute("PRAGMA table_info(settings)")).fetchall()
             }
-            if "screen_message_id" not in columns:
-                await db.execute("ALTER TABLE settings ADD COLUMN screen_message_id INTEGER")
-            if "keyboard_version" not in columns:
+            if "reply_keyboard_removed" not in columns:
                 await db.execute(
-                    "ALTER TABLE settings ADD COLUMN keyboard_version INTEGER NOT NULL DEFAULT 0"
+                    "ALTER TABLE settings ADD COLUMN reply_keyboard_removed "
+                    "INTEGER NOT NULL DEFAULT 0"
                 )
             await db.commit()
 
@@ -59,7 +57,7 @@ class Storage:
             row = await (
                 await db.execute(
                     "SELECT channel_id, channel_title, signature_json, instant_publish, "
-                    "screen_message_id, keyboard_version "
+                    "reply_keyboard_removed "
                     "FROM settings WHERE user_id = ?",
                     (user_id,),
                 )
@@ -72,8 +70,7 @@ class Storage:
             channel_title=row[1],
             signature=RichText.from_dict(json.loads(row[2])) if row[2] else None,
             instant_publish=bool(row[3]),
-            screen_message_id=row[4],
-            keyboard_version=row[5],
+            reply_keyboard_removed=bool(row[4]),
         )
 
     async def _ensure_settings(self, db: aiosqlite.Connection, user_id: int) -> None:
@@ -109,21 +106,12 @@ class Storage:
             await db.commit()
         return new_value
 
-    async def set_screen_message_id(self, user_id: int, message_id: int | None) -> None:
+    async def mark_reply_keyboard_removed(self, user_id: int) -> None:
         async with aiosqlite.connect(self.path) as db:
             await self._ensure_settings(db, user_id)
             await db.execute(
-                "UPDATE settings SET screen_message_id = ? WHERE user_id = ?",
-                (message_id, user_id),
-            )
-            await db.commit()
-
-    async def set_keyboard_version(self, user_id: int, version: int) -> None:
-        async with aiosqlite.connect(self.path) as db:
-            await self._ensure_settings(db, user_id)
-            await db.execute(
-                "UPDATE settings SET keyboard_version = ? WHERE user_id = ?",
-                (version, user_id),
+                "UPDATE settings SET reply_keyboard_removed = 1 WHERE user_id = ?",
+                (user_id,),
             )
             await db.commit()
 

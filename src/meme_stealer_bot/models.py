@@ -60,5 +60,4 @@ class UserSettings:
     channel_title: str | None = None
     signature: RichText | None = None
     instant_publish: bool = False
-    screen_message_id: int | None = None
-    keyboard_version: int = 0
+    reply_keyboard_removed: bool = False

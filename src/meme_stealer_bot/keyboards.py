@@ -1,27 +1,20 @@
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
 )
 
 from .models import UserSettings
 
-SETTINGS_BUTTON = "⚙️ Настройки"
-STATUS_BUTTON = "📊 Статус"
-MAIN_BUTTON = "🏠 Главное"
-HELP_BUTTON = "ℹ️ Помощь"
 
-
-def main_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=SETTINGS_BUTTON), KeyboardButton(text=STATUS_BUTTON)],
-            [KeyboardButton(text=MAIN_BUTTON), KeyboardButton(text=HELP_BUTTON)],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-        input_field_placeholder="Пришли текст или мем",
+def main_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⚙️ Настройки", callback_data="screen:settings"),
+                InlineKeyboardButton(text="📊 Статус", callback_data="screen:status"),
+            ],
+            [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="screen:help")],
+        ]
     )
 
 

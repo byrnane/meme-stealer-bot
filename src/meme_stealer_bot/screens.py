@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardRemove
 
 from .keyboards import back_keyboard, main_keyboard, settings_keyboard
 from .models import RichText, UserSettings
@@ -24,7 +24,6 @@ HELP_TEXT = (
     "Поддерживаются фото, GIF, видео и фото/видео-альбомы.\n"
     "Текст ждёт следующий мем 10 минут."
 )
-KEYBOARD_VERSION = 3
 
 
 def preview_text(value: RichText | None, limit: int = 80) -> str:
@@ -59,63 +58,71 @@ class ScreenManager:
         self.storage = storage
         self.user_id = user_id
 
-    async def show_main(self) -> None:
-        await self.ensure_screen()
-        await self.show(MAIN_TEXT)
+    async def send_main(self) -> None:
+        await self.remove_reply_keyboard()
+        await self.send(MAIN_TEXT, reply_markup=main_keyboard())
 
-    async def show_settings(self) -> None:
-        await self.ensure_screen()
+    async def send_settings(self) -> None:
+        await self.remove_reply_keyboard()
         settings = await self.storage.get_settings(self.user_id)
-        await self.show("Настройки публикации:", reply_markup=settings_keyboard(settings))
+        await self.send("Настройки публикации:", reply_markup=settings_keyboard(settings))
 
-    async def show_status(self) -> None:
-        await self.ensure_screen()
+    async def remove_reply_keyboard(self) -> None:
+        settings = await self.storage.get_settings(self.user_id)
+        if settings.reply_keyboard_removed:
+            return
+        message = await self.bot.send_message(
+            self.user_id, "Нижнее меню отключено.", reply_markup=ReplyKeyboardRemove()
+        )
+        await self.storage.mark_reply_keyboard_removed(self.user_id)
+        try:
+            await self.bot.delete_message(self.user_id, message.message_id)
+        except TelegramBadRequest:
+            pass
+
+    async def edit_main(self, message_id: int) -> None:
+        await self.edit(message_id, MAIN_TEXT, reply_markup=main_keyboard())
+
+    async def edit_settings(self, message_id: int) -> None:
+        settings = await self.storage.get_settings(self.user_id)
+        await self.edit(
+            message_id, "Настройки публикации:", reply_markup=settings_keyboard(settings)
+        )
+
+    async def edit_status(self, message_id: int) -> None:
         settings = await self.storage.get_settings(self.user_id)
         text = await build_status_text(self.storage, settings)
-        await self.show(text, reply_markup=back_keyboard())
+        await self.edit(message_id, text, reply_markup=back_keyboard())
 
-    async def show_help(self) -> None:
-        await self.ensure_screen()
-        await self.show(HELP_TEXT, reply_markup=back_keyboard())
+    async def edit_help(self, message_id: int) -> None:
+        await self.edit(message_id, HELP_TEXT, reply_markup=back_keyboard())
 
-    async def begin_input(self, text: str) -> None:
-        await self.ensure_screen()
-        await self.show(text, reply_markup=back_keyboard())
+    async def edit_input(self, message_id: int, text: str) -> None:
+        await self.edit(message_id, text, reply_markup=back_keyboard())
 
-    async def ensure_screen(self) -> None:
-        settings = await self.storage.get_settings(self.user_id)
-        if settings.screen_message_id is not None and settings.keyboard_version >= KEYBOARD_VERSION:
-            return
-        await self.create(MAIN_TEXT, reply_markup=main_keyboard())
-        await self.storage.set_keyboard_version(self.user_id, KEYBOARD_VERSION)
-
-    async def show(
+    async def edit(
         self,
+        message_id: int,
         text: str,
         *,
-        reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
     ) -> None:
-        settings = await self.storage.get_settings(self.user_id)
-        message_id = settings.screen_message_id
-        if message_id:
-            try:
-                await self.bot.edit_message_text(
-                    chat_id=self.user_id,
-                    message_id=message_id,
-                    text=text,
-                    reply_markup=reply_markup,
-                )
+        try:
+            await self.bot.edit_message_text(
+                chat_id=self.user_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=reply_markup,
+            )
+        except TelegramBadRequest as error:
+            if "message is not modified" in error.message.lower():
                 return
-            except TelegramBadRequest as error:
-                if "message is not modified" in error.message.lower():
-                    return
-        await self.create(text, reply_markup=reply_markup)
+            await self.send(text, reply_markup=reply_markup)
 
-    async def create(
+    async def send(
         self,
         text: str,
         *,
-        reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
     ) -> None:
-        message = await self.bot.send_message(self.user_id, text, reply_markup=reply_markup)
-        await self.storage.set_screen_message_id(self.user_id, message.message_id)
+        await self.bot.send_message(self.user_id, text, reply_markup=reply_markup)

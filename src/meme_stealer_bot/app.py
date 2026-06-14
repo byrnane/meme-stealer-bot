@@ -13,7 +13,6 @@ from aiogram.types import CallbackQuery, Message, MessageOriginChannel
 
 from .captions import caption_is_too_long, combine_rich_text, plain_rich_text
 from .collector import AlbumCollector
-from .keyboards import HELP_BUTTON, MAIN_BUTTON, SETTINGS_BUTTON, STATUS_BUTTON
 from .models import Draft, RichText
 from .publishing import Publisher, media_item_from_message
 from .screens import ScreenManager
@@ -54,13 +53,6 @@ class MemeStealerApp:
         self.router.message.register(self.start, owner, CommandStart())
         self.router.message.register(self.cancel, owner, Command("cancel"))
         self.router.message.register(self.settings, owner, Command("settings"))
-        self.router.message.register(self.status, owner, Command("status"))
-        self.router.message.register(self.help, owner, Command("help"))
-        self.router.message.register(self.menu, owner, Command("menu"))
-        self.router.message.register(self.settings, owner, F.text == SETTINGS_BUTTON)
-        self.router.message.register(self.status, owner, F.text == STATUS_BUTTON)
-        self.router.message.register(self.menu, owner, F.text == MAIN_BUTTON)
-        self.router.message.register(self.help, owner, F.text == HELP_BUTTON)
         self.router.callback_query.register(
             self.screen_callback, owner, F.data.startswith("screen:")
         )
@@ -84,47 +76,49 @@ class MemeStealerApp:
 
     async def start(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        await self.screens.show_main()
-
-    async def menu(self, message: Message, state: FSMContext) -> None:
-        await state.clear()
-        await self.screens.show_main()
+        await self.screens.send_main()
 
     async def cancel(self, message: Message, state: FSMContext) -> None:
         self._cancel_pending_expiry()
         await state.clear()
         await self.storage.clear_pending_text(self.owner_id)
-        await self.screens.show_main()
+        await self.screens.send_main()
 
     async def settings(self, message: Message, state: FSMContext) -> None:
         await state.clear()
-        await self.screens.show_settings()
-
-    async def status(self, message: Message, state: FSMContext) -> None:
-        await state.clear()
-        await self.screens.show_status()
-
-    async def help(self, message: Message, state: FSMContext) -> None:
-        await state.clear()
-        await self.screens.show_help()
+        await self.screens.send_settings()
 
     async def screen_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
+        message_id = callback.message.message_id
         if callback.data == "screen:main":
             await state.clear()
-            await self.screens.show_main()
+            await self.screens.edit_main(message_id)
+        elif callback.data == "screen:settings":
+            await state.clear()
+            await self.screens.edit_settings(message_id)
+        elif callback.data == "screen:status":
+            await state.clear()
+            await self.screens.edit_status(message_id)
+        elif callback.data == "screen:help":
+            await state.clear()
+            await self.screens.edit_help(message_id)
         await callback.answer()
 
     async def settings_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
         action = callback.data or ""
+        message_id = callback.message.message_id
         if action == "settings:channel":
             await state.set_state(SettingsState.waiting_for_channel)
-            await self.screens.begin_input(
-                "Перешли любой пост из целевого канала или отправь его @username / числовой ID."
+            await state.update_data(screen_message_id=message_id)
+            await self.screens.edit_input(
+                message_id,
+                "Перешли любой пост из целевого канала или отправь его @username / числовой ID.",
             )
         elif action == "settings:signature":
             await state.set_state(SettingsState.waiting_for_signature)
-            await self.screens.begin_input(
-                "Отправь новую общую подпись одним текстовым сообщением."
+            await state.update_data(screen_message_id=message_id)
+            await self.screens.edit_input(
+                message_id, "Отправь новую общую подпись одним текстовым сообщением."
             )
         elif action == "settings:signature:clear":
             await self.storage.set_signature(self.owner_id, None)
@@ -136,9 +130,10 @@ class MemeStealerApp:
         if action in {"settings:channel", "settings:signature"}:
             await callback.answer()
         else:
-            await self.screens.show_settings()
+            await self.screens.edit_settings(message_id)
 
     async def receive_channel(self, message: Message, state: FSMContext) -> None:
+        screen_message_id = (await state.get_data()).get("screen_message_id")
         channel_ref: int | str | None = None
         if isinstance(message.forward_origin, MessageOriginChannel):
             channel_ref = message.forward_origin.chat.id
@@ -149,16 +144,18 @@ class MemeStealerApp:
             except ValueError:
                 channel_ref = value if value.startswith("@") else f"@{value}"
         if channel_ref is None:
-            await self.screens.begin_input(
-                "Не вижу канал.\n\nПерешли пост из него или отправь @username / числовой ID."
+            await self.screens.edit_input(
+                screen_message_id,
+                "Не вижу канал.\n\nПерешли пост из него или отправь @username / числовой ID.",
             )
             return
         try:
             chat = await self.bot.get_chat(channel_ref)
             if chat.type != ChatType.CHANNEL:
-                await self.screens.begin_input(
+                await self.screens.edit_input(
+                    screen_message_id,
                     "Это не канал.\n\n"
-                    "Перешли пост из канала или отправь его @username / числовой ID."
+                    "Перешли пост из канала или отправь его @username / числовой ID.",
                 )
                 return
             me = await self.bot.get_me()
@@ -168,30 +165,33 @@ class MemeStealerApp:
                 and bool(getattr(membership, "can_post_messages", False))
             )
             if not allowed:
-                await self.screens.begin_input(
+                await self.screens.edit_input(
+                    screen_message_id,
                     "У бота нет права публикации.\n\n"
-                    "Добавь его администратором канала с правом публикации и попробуй снова."
+                    "Добавь его администратором канала с правом публикации и попробуй снова.",
                 )
                 return
         except (TelegramBadRequest, TelegramForbiddenError):
-            await self.screens.begin_input(
-                "Не удалось открыть канал.\n\nПроверь адрес и права бота, затем попробуй снова."
+            await self.screens.edit_input(
+                screen_message_id,
+                "Не удалось открыть канал.\n\nПроверь адрес и права бота, затем попробуй снова.",
             )
             return
         await self.storage.set_channel(self.owner_id, chat.id, chat.title or str(chat.id))
         await state.clear()
-        await self.screens.show_settings()
+        await self.screens.edit_settings(screen_message_id)
 
     async def receive_signature(self, message: Message, state: FSMContext) -> None:
+        screen_message_id = (await state.get_data()).get("screen_message_id")
         signature = plain_rich_text(message.text or "", message.entities)
         if caption_is_too_long(signature):
-            await self.screens.begin_input(
-                "Подпись длиннее 1024 символов.\n\nСократи её и отправь ещё раз."
+            await self.screens.edit_input(
+                screen_message_id, "Подпись длиннее 1024 символов.\n\nСократи её и отправь ещё раз."
             )
             return
         await self.storage.set_signature(self.owner_id, signature)
         await state.clear()
-        await self.screens.show_settings()
+        await self.screens.edit_settings(screen_message_id)
 
     async def receive_text(self, message: Message) -> None:
         text = plain_rich_text(message.text or "", message.entities)
