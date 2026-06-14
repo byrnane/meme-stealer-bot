@@ -1,0 +1,21 @@
+[Unit]
+Description=Meme Stealer Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=meme-deploy
+Group=meme-deploy
+WorkingDirectory=/home/meme-deploy/app/current
+ExecStart=/home/meme-deploy/app/current/.venv/bin/meme-stealer-bot
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/meme-deploy/app/shared/data
+
+[Install]
+WantedBy=multi-user.target

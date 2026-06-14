@@ -1,0 +1,73 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install ".[dev]"
+
+      - name: Check
+        run: |
+          pytest -q
+          ruff check .
+          ruff format --check .
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -t ed25519 31.77.129.8 > ~/.ssh/known_hosts
+          test "$(ssh-keygen -lf ~/.ssh/known_hosts | awk '{print $2}')" = \
+            "SHA256:fvlYQ2P2IRvminEO58WIzlygJHMBQK6lqga6BA5lNK8"
+
+      - name: Build release archive
+        run: |
+          tar \
+            --exclude=.git \
+            --exclude=.env \
+            --exclude=.deploy \
+            --exclude=.venv \
+            --exclude=.pytest_cache \
+            --exclude=.ruff_cache \
+            --exclude=data \
+            --exclude=backups \
+            -czf /tmp/meme-stealer-bot.tar.gz .
+
+      - name: Upload and deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key meme-deploy@31.77.129.8 "mkdir -p releases"
+          scp -i ~/.ssh/deploy_key /tmp/meme-stealer-bot.tar.gz \
+            "meme-deploy@31.77.129.8:releases/${GITHUB_SHA}.tar.gz"
+          ssh -i ~/.ssh/deploy_key meme-deploy@31.77.129.8 \
+            "/home/meme-deploy/bin/deploy-meme-stealer-bot ${GITHUB_SHA}"
