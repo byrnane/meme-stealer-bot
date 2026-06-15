@@ -232,7 +232,7 @@ class MemeStealerApp:
         draft = Draft(id=None, user_id=self.owner_id, media=media, caption=caption)
         if settings.instant_publish:
             try:
-                await self.publisher.send(settings.channel_id, draft)
+                await self.publisher.send(settings.channel_id, draft, disable_notification=True)
                 self._cancel_pending_expiry()
                 await self.storage.clear_pending_text(self.owner_id)
                 await first.answer("Опубликовано.")
@@ -269,7 +269,7 @@ class MemeStealerApp:
             await callback.answer("Сначала выбери канал в /settings.", show_alert=True)
             return
         try:
-            await self.publisher.send(settings.channel_id, draft)
+            await self.publisher.send(settings.channel_id, draft, disable_notification=True)
         except (TelegramBadRequest, TelegramForbiddenError):
             await callback.answer("Не удалось опубликовать. Проверь права бота.", show_alert=True)
             return

@@ -36,7 +36,12 @@ class Publisher:
         }
 
     async def send(
-        self, chat_id: int, draft: Draft, *, preview_draft_id: int | None = None
+        self,
+        chat_id: int,
+        draft: Draft,
+        *,
+        preview_draft_id: int | None = None,
+        disable_notification: bool = False,
     ) -> None:
         reply_markup = draft_keyboard(preview_draft_id) if preview_draft_id is not None else None
         if len(draft.media) > 1:
@@ -59,15 +64,26 @@ class Publisher:
                             **self._caption_args(caption),
                         )
                     )
-            await self.bot.send_media_group(chat_id=chat_id, media=media)
+            await self.bot.send_media_group(
+                chat_id=chat_id,
+                media=media,
+                disable_notification=disable_notification,
+            )
             if reply_markup:
                 await self.bot.send_message(
-                    chat_id=chat_id, text="Опубликовать этот альбом?", reply_markup=reply_markup
+                    chat_id=chat_id,
+                    text="Опубликовать этот альбом?",
+                    reply_markup=reply_markup,
+                    disable_notification=disable_notification,
                 )
             return
 
         item = draft.media[0]
-        common = {**self._caption_args(draft.caption), "reply_markup": reply_markup}
+        common = {
+            **self._caption_args(draft.caption),
+            "reply_markup": reply_markup,
+            "disable_notification": disable_notification,
+        }
         if item.kind == "photo":
             await self.bot.send_photo(
                 chat_id=chat_id, photo=item.file_id, has_spoiler=item.has_spoiler, **common
