@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 
-from meme_stealer_bot.models import RichText
+from meme_stealer_bot.models import Draft, MediaItem, RichText
 from meme_stealer_bot.storage import Storage
 
 
@@ -57,3 +57,75 @@ async def test_reply_keyboard_removal_is_persisted(tmp_path) -> None:
     await storage.mark_reply_keyboard_removed(1)
 
     assert (await storage.get_settings(1)).reply_keyboard_removed is True
+
+
+async def test_draft_can_be_claimed_once_and_released(tmp_path) -> None:
+    storage = Storage(tmp_path / "bot.sqlite3")
+    await storage.initialize()
+    draft_id = await storage.create_draft(Draft(None, 1, [MediaItem("photo", "id")], None))
+
+    claimed = await storage.claim_draft(draft_id, 1)
+
+    assert claimed is not None
+    assert claimed.id == draft_id
+    assert await storage.claim_draft(draft_id, 1) is None
+    assert await storage.get_draft(draft_id, 1) is None
+    assert await storage.count_drafts(1) == 0
+
+    await storage.release_draft(draft_id, 1)
+
+    assert await storage.get_draft(draft_id, 1) is not None
+    assert await storage.count_drafts(1) == 1
+
+
+async def test_claimed_draft_is_not_deleted_by_cancel(tmp_path) -> None:
+    storage = Storage(tmp_path / "bot.sqlite3")
+    await storage.initialize()
+    draft_id = await storage.create_draft(Draft(None, 1, [MediaItem("photo", "id")], None))
+    assert await storage.claim_draft(draft_id, 1) is not None
+
+    await storage.delete_draft(draft_id, 1)
+
+    assert await storage.claim_draft(draft_id, 1) is None
+
+    await storage.finish_draft(draft_id, 1)
+
+    assert await storage.count_drafts(1) == 0
+
+
+async def test_initialize_adds_claimed_at_to_existing_drafts_table(tmp_path) -> None:
+    path = tmp_path / "bot.sqlite3"
+    async with aiosqlite.connect(path) as db:
+        await db.executescript(
+            """
+            CREATE TABLE settings (
+                user_id INTEGER PRIMARY KEY,
+                channel_id INTEGER,
+                channel_title TEXT,
+                signature_json TEXT,
+                instant_publish INTEGER NOT NULL DEFAULT 0,
+                reply_keyboard_removed INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE pending_text (
+                user_id INTEGER PRIMARY KEY,
+                rich_text_json TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
+            CREATE TABLE drafts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                media_json TEXT NOT NULL,
+                caption_json TEXT,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        await db.commit()
+    storage = Storage(path)
+
+    await storage.initialize()
+
+    async with aiosqlite.connect(path) as db:
+        rows = await (await db.execute("PRAGMA table_info(drafts)")).fetchall()
+        columns = {row[1] for row in rows}
+    assert "claimed_at" in columns

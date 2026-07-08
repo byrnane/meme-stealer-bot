@@ -38,7 +38,8 @@ class Storage:
                     user_id INTEGER NOT NULL,
                     media_json TEXT NOT NULL,
                     caption_json TEXT,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    claimed_at TEXT
                 );
                 """
             )
@@ -50,6 +51,11 @@ class Storage:
                     "ALTER TABLE settings ADD COLUMN reply_keyboard_removed "
                     "INTEGER NOT NULL DEFAULT 0"
                 )
+            draft_columns = {
+                row[1] for row in await (await db.execute("PRAGMA table_info(drafts)")).fetchall()
+            }
+            if "claimed_at" not in draft_columns:
+                await db.execute("ALTER TABLE drafts ADD COLUMN claimed_at TEXT")
             await db.commit()
 
     async def get_settings(self, user_id: int) -> UserSettings:
@@ -187,7 +193,8 @@ class Storage:
         async with aiosqlite.connect(self.path) as db:
             row = await (
                 await db.execute(
-                    "SELECT media_json, caption_json FROM drafts WHERE id = ? AND user_id = ?",
+                    "SELECT media_json, caption_json FROM drafts "
+                    "WHERE id = ? AND user_id = ? AND claimed_at IS NULL",
                     (draft_id, user_id),
                 )
             ).fetchone()
@@ -200,7 +207,50 @@ class Storage:
             caption=RichText.from_dict(json.loads(row[1])) if row[1] else None,
         )
 
+    async def claim_draft(self, draft_id: int, user_id: int) -> Draft | None:
+        claimed_at = datetime.now(UTC).isoformat()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "UPDATE drafts SET claimed_at = ? "
+                "WHERE id = ? AND user_id = ? AND claimed_at IS NULL",
+                (claimed_at, draft_id, user_id),
+            )
+            if cursor.rowcount != 1:
+                await db.commit()
+                return None
+            row = await (
+                await db.execute(
+                    "SELECT media_json, caption_json FROM drafts WHERE id = ? AND user_id = ?",
+                    (draft_id, user_id),
+                )
+            ).fetchone()
+            await db.commit()
+        if not row:
+            return None
+        return Draft(
+            id=draft_id,
+            user_id=user_id,
+            media=[MediaItem.from_dict(item) for item in json.loads(row[0])],
+            caption=RichText.from_dict(json.loads(row[1])) if row[1] else None,
+        )
+
+    async def release_draft(self, draft_id: int, user_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE drafts SET claimed_at = NULL WHERE id = ? AND user_id = ?",
+                (draft_id, user_id),
+            )
+            await db.commit()
+
     async def delete_draft(self, draft_id: int, user_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "DELETE FROM drafts WHERE id = ? AND user_id = ? AND claimed_at IS NULL",
+                (draft_id, user_id),
+            )
+            await db.commit()
+
+    async def finish_draft(self, draft_id: int, user_id: int) -> None:
         async with aiosqlite.connect(self.path) as db:
             await db.execute("DELETE FROM drafts WHERE id = ? AND user_id = ?", (draft_id, user_id))
             await db.commit()
@@ -208,6 +258,9 @@ class Storage:
     async def count_drafts(self, user_id: int) -> int:
         async with aiosqlite.connect(self.path) as db:
             row = await (
-                await db.execute("SELECT COUNT(*) FROM drafts WHERE user_id = ?", (user_id,))
+                await db.execute(
+                    "SELECT COUNT(*) FROM drafts WHERE user_id = ? AND claimed_at IS NULL",
+                    (user_id,),
+                )
             ).fetchone()
         return int(row[0])

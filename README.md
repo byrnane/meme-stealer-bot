@@ -1,114 +1,91 @@
 # Meme Stealer Bot
 
-Персональный Telegram-бот для быстрой публикации мемов в канал. Бот принимает прямые
-медиа и репосты, удаляет подпись и ссылку оригинала, добавляет твой комментарий и общую
-подпись, затем показывает превью или сразу публикует пост.
+| Русский | English |
+| --- | --- |
+| Личный Telegram-бот для чистой публикации мемов в свой канал. Принимает фото, GIF, видео и альбомы, убирает подпись/ссылку оригинала, добавляет твой комментарий и общую подпись, затем показывает превью или публикует сразу. | Personal Telegram bot for clean meme reposts into your own channel. It accepts photos, GIFs, videos, and albums, removes the original caption/source, adds your comment and shared signature, then shows a preview or publishes immediately. |
+| Работает через long polling и SQLite. Публичный HTTP-порт, webhook и отдельная база не нужны. | Uses Telegram long polling and SQLite. No public HTTP port, webhook, or external database required. |
+| Управление приватное: бот слушает только `OWNER_ID`. Нативное меню содержит `/start` и `/settings`, остальные экраны работают через inline-кнопки. | Owner-only control: the bot accepts commands only from `OWNER_ID`. Native menu has `/start` and `/settings`; other screens use inline buttons. |
 
-Поддерживаются фото, GIF, видео и смешанные фото/видео-альбомы.
+## Быстрый старт / Quick Start
 
-Бот использует inline-меню внутри системных сообщений. Команды `/start` и `/settings`
-всегда создают новый экран. Переходы по inline-кнопкам редактируют этот же экран.
+| Русский | English |
+| --- | --- |
+| 1. Создай бота через [@BotFather](https://t.me/BotFather). | 1. Create a bot with [@BotFather](https://t.me/BotFather). |
+| 2. Узнай свой числовой Telegram ID. | 2. Find your numeric Telegram user ID. |
+| 3. Добавь бота админом канала с правом публикации. | 3. Add the bot as a channel admin with posting rights. |
+| 4. Скопируй `.env.example` в `.env` и заполни `BOT_TOKEN` / `OWNER_ID`. | 4. Copy `.env.example` to `.env` and fill `BOT_TOKEN` / `OWNER_ID`. |
+| 5. Запусти локально или через Docker. | 5. Run locally or via Docker. |
 
-## Быстрый запуск на Windows
-
-Из PowerShell в папке проекта:
+### Windows
 
 ```powershell
 .\scripts\setup.ps1
+notepad .env
+.\scripts\doctor.ps1
+.\scripts\start.ps1
 ```
 
-Команда сама:
+### Linux / macOS
 
-- создаст `.venv`;
-- установит зависимости;
-- создаст `.env`, если его ещё нет;
-- создаст SQLite-базу `data/bot.sqlite3`.
+```bash
+bash scripts/setup.sh
+nano .env
+bash scripts/check.sh
+bash scripts/start.sh
+```
 
-Открой `.env` и заполни:
+### Docker Compose
+
+```bash
+cp .env.example .env
+nano .env
+mkdir -p data
+sudo chown -R 10001:10001 data
+sudo chmod 700 data
+docker compose up -d --build
+docker compose logs -f bot
+```
+
+## Конфиг / Configuration
 
 ```env
-BOT_TOKEN=токен_от_BotFather
-OWNER_ID=твой_числовой_Telegram_ID
+BOT_TOKEN=123456:replace-me
+OWNER_ID=123456789
 DATABASE_PATH=data/bot.sqlite3
 LOG_LEVEL=INFO
 ```
 
-Затем запусти бота:
+| Variable | Description |
+| --- | --- |
+| `BOT_TOKEN` | Telegram bot token from BotFather. |
+| `OWNER_ID` | Numeric Telegram user ID allowed to control the bot. |
+| `DATABASE_PATH` | SQLite path, default `data/bot.sqlite3`. |
+| `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. |
 
-```powershell
-.\scripts\start.ps1
+Не коммить `.env`, базы, дампы, бэкапы и приватные ключи.
+
+Do not commit `.env`, databases, dumps, backups, or private keys.
+
+## Использование / Usage
+
+| Русский | English |
+| --- | --- |
+| Напиши боту `/start`, затем `/settings` и выбери канал. | Send `/start`, then `/settings`, and choose the target channel. |
+| Отправь текст комментария, затем мем. | Send a comment text, then send or forward a meme. |
+| Проверь превью и нажми `Опубликовать`, либо включи мгновенную публикацию в настройках. | Review the preview and press `Опубликовать`, or enable instant publishing in settings. |
+| `/cancel` очищает ожидающий текст и текущий ввод. | `/cancel` clears pending text and the current input state. |
+
+## Ссылки / Links
+
+- [DEPLOY.md](DEPLOY.md) — VPS and GitHub Actions deployment.
+- [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) — public-release safety checklist.
+- [LICENSE](LICENSE) — MIT license.
+
+## Проверки / Checks
+
+```bash
+pytest -q
+ruff check .
+ruff format --check .
+uv lock --check
 ```
-
-Окно PowerShell должно оставаться открытым. Остановить бота можно через `Ctrl+C`.
-Закрытие окна терминала тоже остановит локально запущенного бота, но `Ctrl+C` завершает
-его аккуратнее.
-
-## Подготовка Telegram
-
-1. Создай бота через [@BotFather](https://t.me/BotFather) командой `/newbot`.
-2. Запиши полученный токен в `BOT_TOKEN`.
-3. Узнай свой ID через `@userinfobot` или `@getmyid_bot` и запиши в `OWNER_ID`.
-4. Добавь бота администратором канала с правом публикации сообщений.
-5. Запусти бота, напиши ему `/start`, затем `/settings`.
-6. Нажми кнопку выбора канала и перешли боту любой пост из своего канала.
-
-После этого отправь боту текст комментария, а следом перешли мем. Бот покажет готовый
-пост и кнопку публикации.
-
-## Управление ботом
-
-Главный экран содержит inline-кнопки:
-
-- `⚙️ Настройки` — канал, общая подпись и режим публикации;
-- `📊 Статус` — текущая конфигурация, ожидающий комментарий и черновики;
-- `ℹ️ Помощь` — краткая инструкция.
-
-Внутри разделов есть кнопка `← Главное меню`, которая редактирует текущий экран.
-Синяя кнопка «Меню» слева от поля ввода содержит только `/start` и `/settings`.
-
-## База данных
-
-Используется локальная SQLite-база. Отдельный сервер базы данных не нужен.
-
-Бот автоматически создаёт базу и таблицы при каждом запуске. Также её можно создать
-вручную:
-
-```powershell
-.\scripts\init-db.ps1
-```
-
-Файл базы находится в `data/bot.sqlite3`. Чтобы полностью сбросить настройки и черновики,
-останови бота и удали этот файл.
-
-## Полезные команды
-
-```powershell
-.\scripts\setup.ps1    # первоначальная настройка проекта
-.\scripts\start.ps1    # запустить бота
-.\scripts\init-db.ps1  # создать базу и таблицы
-.\scripts\doctor.ps1   # проверить .env и наличие базы
-.\scripts\check.ps1    # запустить тесты и линтер
-```
-
-Текст ждёт следующее медиа 10 минут. Новый текст заменяет предыдущий. `/cancel` очищает
-ожидающий текст, текущую настройку и черновики.
-
-## Docker Compose
-
-```powershell
-docker compose up -d --build
-docker compose logs -f bot
-docker compose down
-```
-
-SQLite-база сохраняется в локальной папке `data/`.
-Для Docker-запуска бот продолжает работать после закрытия терминала. Остановить его нужно
-командой `docker compose down` или кнопкой Stop в Docker Desktop.
-
-## Разработка
-
-```powershell
-.\scripts\check.ps1
-```
-
-Бот работает через long polling, поэтому публичный HTTP-сервер и webhook не нужны.

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Literal
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatMemberStatus, ChatType
@@ -20,6 +22,13 @@ from .states import SettingsState
 from .storage import Storage
 
 logger = logging.getLogger(__name__)
+STALE_BUTTON_TEXT = "Кнопка устарела. Открой меню заново."
+
+
+@dataclass(frozen=True, slots=True)
+class DraftAction:
+    action: Literal["publish", "cancel"]
+    draft_id: int
 
 
 def personal_caption_from_messages(
@@ -31,6 +40,25 @@ def personal_caption_from_messages(
     if caption_message:
         return plain_rich_text(caption_message.caption or "", caption_message.caption_entities)
     return pending
+
+
+def parse_draft_callback_data(data: str | None) -> DraftAction | None:
+    parts = (data or "").split(":")
+    if len(parts) != 3 or parts[0] != "draft" or parts[1] not in {"publish", "cancel"}:
+        return None
+    try:
+        draft_id = int(parts[2])
+    except ValueError:
+        return None
+    if draft_id < 1:
+        return None
+    return DraftAction(action=parts[1], draft_id=draft_id)
+
+
+def callback_message_id(callback: CallbackQuery) -> int | None:
+    message = callback.message
+    message_id = getattr(message, "message_id", None)
+    return message_id if isinstance(message_id, int) else None
 
 
 class MemeStealerApp:
@@ -89,7 +117,10 @@ class MemeStealerApp:
         await self.screens.send_settings()
 
     async def screen_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
-        message_id = callback.message.message_id
+        message_id = callback_message_id(callback)
+        if message_id is None:
+            await callback.answer(STALE_BUTTON_TEXT, show_alert=True)
+            return
         if callback.data == "screen:main":
             await state.clear()
             await self.screens.edit_main(message_id)
@@ -102,11 +133,17 @@ class MemeStealerApp:
         elif callback.data == "screen:help":
             await state.clear()
             await self.screens.edit_help(message_id)
+        else:
+            await callback.answer(STALE_BUTTON_TEXT, show_alert=True)
+            return
         await callback.answer()
 
     async def settings_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
         action = callback.data or ""
-        message_id = callback.message.message_id
+        message_id = callback_message_id(callback)
+        if message_id is None:
+            await callback.answer(STALE_BUTTON_TEXT, show_alert=True)
+            return
         if action == "settings:channel":
             await state.set_state(SettingsState.waiting_for_channel)
             await state.update_data(screen_message_id=message_id)
@@ -127,6 +164,9 @@ class MemeStealerApp:
             instant = await self.storage.toggle_publish_mode(self.owner_id)
             text = "Теперь публикую мгновенно." if instant else "Теперь показываю превью."
             await callback.answer(text)
+        else:
+            await callback.answer(STALE_BUTTON_TEXT, show_alert=True)
+            return
         if action in {"settings:channel", "settings:signature"}:
             await callback.answer()
         else:
@@ -253,31 +293,42 @@ class MemeStealerApp:
         await self.storage.clear_pending_text(self.owner_id)
 
     async def draft_callback(self, callback: CallbackQuery) -> None:
-        _, action, raw_id = (callback.data or "").split(":")
-        draft_id = int(raw_id)
-        draft = await self.storage.get_draft(draft_id, self.owner_id)
-        if not draft:
-            await callback.answer("Черновик уже обработан.", show_alert=True)
+        action = parse_draft_callback_data(callback.data)
+        if action is None:
+            await callback.answer(STALE_BUTTON_TEXT, show_alert=True)
             return
-        if action == "cancel":
-            await self.storage.delete_draft(draft_id, self.owner_id)
+        if action.action == "cancel":
+            draft = await self.storage.get_draft(action.draft_id, self.owner_id)
+            if not draft:
+                await callback.answer("Черновик уже обработан.", show_alert=True)
+                return
+            await self.storage.delete_draft(action.draft_id, self.owner_id)
             await callback.answer("Черновик отменён.")
             await self._remove_buttons(callback)
             return
+
+        draft = await self.storage.claim_draft(action.draft_id, self.owner_id)
+        if not draft:
+            await callback.answer("Черновик уже обработан.", show_alert=True)
+            return
         settings = await self.storage.get_settings(self.owner_id)
         if settings.channel_id is None:
+            await self.storage.release_draft(action.draft_id, self.owner_id)
             await callback.answer("Сначала выбери канал в /settings.", show_alert=True)
             return
         try:
             await self.publisher.send(settings.channel_id, draft, disable_notification=True)
         except (TelegramBadRequest, TelegramForbiddenError):
+            await self.storage.release_draft(action.draft_id, self.owner_id)
             await callback.answer("Не удалось опубликовать. Проверь права бота.", show_alert=True)
             return
-        await self.storage.delete_draft(draft_id, self.owner_id)
+        await self.storage.finish_draft(action.draft_id, self.owner_id)
         await callback.answer("Опубликовано.")
         await self._remove_buttons(callback)
 
     async def _remove_buttons(self, callback: CallbackQuery) -> None:
+        if callback.message is None:
+            return
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest:

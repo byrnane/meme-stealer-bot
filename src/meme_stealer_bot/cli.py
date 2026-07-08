@@ -7,6 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .config import validate_config
 from .main import main
 from .storage import Storage
 
@@ -22,17 +23,18 @@ async def initialize_database() -> None:
 
 
 def doctor() -> int:
-    token = os.getenv("BOT_TOKEN", "").strip()
-    owner_id = os.getenv("OWNER_ID", "").strip()
-    path = database_path()
-    problems = []
-
-    if not token or token == "123456:replace-me":
-        problems.append("BOT_TOKEN не заполнен")
-    if not owner_id or owner_id == "123456789":
-        problems.append("OWNER_ID не заполнен")
-    elif not owner_id.lstrip("-").isdigit():
-        problems.append("OWNER_ID должен быть числом")
+    path_value = os.getenv("DATABASE_PATH", "data/bot.sqlite3")
+    path = Path(path_value)
+    problems: list[str] = []
+    try:
+        validate_config(
+            bot_token=os.getenv("BOT_TOKEN", ""),
+            owner_id=os.getenv("OWNER_ID", ""),
+            database_path=path_value,
+            log_level=os.getenv("LOG_LEVEL", "INFO"),
+        )
+    except ValueError as error:
+        problems.extend(str(error).split("; "))
 
     print(f".env: {'найден' if Path('.env').exists() else 'не найден'}")
     database_status = "найдена" if path.exists() else "будет создана при запуске"
