@@ -18,7 +18,9 @@ def database_path() -> Path:
 
 async def initialize_database() -> None:
     path = database_path()
-    await Storage(path).initialize()
+    storage = Storage(path)
+    await storage.initialize()
+    await storage.run_maintenance()
     print(f"База данных готова: {path.resolve()}")
 
 

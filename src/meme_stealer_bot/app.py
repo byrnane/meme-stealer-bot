@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -70,7 +69,6 @@ class MemeStealerApp:
         self.screens = ScreenManager(bot, storage, owner_id)
         self.router = Router(name="meme-stealer")
         self.album_collector = AlbumCollector(self.process_media_messages)
-        self._pending_expiry_task: asyncio.Task | None = None
         self._register_handlers()
 
     def _owner(self):
@@ -107,7 +105,6 @@ class MemeStealerApp:
         await self.screens.send_main()
 
     async def cancel(self, message: Message, state: FSMContext) -> None:
-        self._cancel_pending_expiry()
         await state.clear()
         await self.storage.clear_pending_text(self.owner_id)
         await self.screens.send_main()
@@ -236,8 +233,6 @@ class MemeStealerApp:
     async def receive_text(self, message: Message) -> None:
         text = plain_rich_text(message.text or "", message.entities)
         await self.storage.set_pending_text(self.owner_id, text)
-        self._cancel_pending_expiry()
-        self._pending_expiry_task = asyncio.create_task(self._expire_pending_text())
         await message.answer("Текст сохранён для следующего мема на 10 минут.")
 
     async def receive_media(self, message: Message) -> None:
@@ -273,7 +268,6 @@ class MemeStealerApp:
         if settings.instant_publish:
             try:
                 await self.publisher.send(settings.channel_id, draft, disable_notification=True)
-                self._cancel_pending_expiry()
                 await self.storage.clear_pending_text(self.owner_id)
                 await first.answer("Опубликовано.")
             except (TelegramBadRequest, TelegramForbiddenError) as error:
@@ -289,7 +283,6 @@ class MemeStealerApp:
             await self.storage.delete_draft(draft_id, self.owner_id)
             await first.answer("Не удалось показать превью. Попробуй отправить мем ещё раз.")
             return
-        self._cancel_pending_expiry()
         await self.storage.clear_pending_text(self.owner_id)
 
     async def draft_callback(self, callback: CallbackQuery) -> None:
@@ -298,31 +291,37 @@ class MemeStealerApp:
             await callback.answer(STALE_BUTTON_TEXT, show_alert=True)
             return
         if action.action == "cancel":
-            draft = await self.storage.get_draft(action.draft_id, self.owner_id)
-            if not draft:
-                await callback.answer("Черновик уже обработан.", show_alert=True)
-                return
-            await self.storage.delete_draft(action.draft_id, self.owner_id)
-            await callback.answer("Черновик отменён.")
-            await self._remove_buttons(callback)
+            await self._cancel_draft(callback, action.draft_id)
             return
 
-        draft = await self.storage.claim_draft(action.draft_id, self.owner_id)
+        await self._publish_draft(callback, action.draft_id)
+
+    async def _cancel_draft(self, callback: CallbackQuery, draft_id: int) -> None:
+        draft = await self.storage.get_draft(draft_id, self.owner_id)
+        if not draft:
+            await callback.answer("Черновик уже обработан.", show_alert=True)
+            return
+        await self.storage.delete_draft(draft_id, self.owner_id)
+        await callback.answer("Черновик отменён.")
+        await self._remove_buttons(callback)
+
+    async def _publish_draft(self, callback: CallbackQuery, draft_id: int) -> None:
+        draft = await self.storage.claim_draft(draft_id, self.owner_id)
         if not draft:
             await callback.answer("Черновик уже обработан.", show_alert=True)
             return
         settings = await self.storage.get_settings(self.owner_id)
         if settings.channel_id is None:
-            await self.storage.release_draft(action.draft_id, self.owner_id)
+            await self.storage.release_draft(draft_id, self.owner_id)
             await callback.answer("Сначала выбери канал в /settings.", show_alert=True)
             return
         try:
             await self.publisher.send(settings.channel_id, draft, disable_notification=True)
         except (TelegramBadRequest, TelegramForbiddenError):
-            await self.storage.release_draft(action.draft_id, self.owner_id)
+            await self.storage.release_draft(draft_id, self.owner_id)
             await callback.answer("Не удалось опубликовать. Проверь права бота.", show_alert=True)
             return
-        await self.storage.finish_draft(action.draft_id, self.owner_id)
+        await self.storage.finish_draft(draft_id, self.owner_id)
         await callback.answer("Опубликовано.")
         await self._remove_buttons(callback)
 
@@ -342,25 +341,6 @@ class MemeStealerApp:
 
     async def unauthorized_callback(self, callback: CallbackQuery) -> None:
         await callback.answer("Этот бот личный.", show_alert=True)
-
-    def _cancel_pending_expiry(self) -> None:
-        if self._pending_expiry_task:
-            self._pending_expiry_task.cancel()
-            self._pending_expiry_task = None
-
-    async def _expire_pending_text(self) -> None:
-        try:
-            await asyncio.sleep(600)
-            expired = await self.storage.pop_pending_text(self.owner_id)
-            if expired:
-                await self.bot.send_message(
-                    self.owner_id, "Прошло 10 минут, сохранённый текст сброшен."
-                )
-        except asyncio.CancelledError:
-            return
-        finally:
-            if self._pending_expiry_task is asyncio.current_task():
-                self._pending_expiry_task = None
 
 
 def create_dispatcher(bot: Bot, storage: Storage, owner_id: int) -> Dispatcher:

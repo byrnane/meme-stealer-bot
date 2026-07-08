@@ -19,6 +19,7 @@ async def main() -> None:
     )
     storage = Storage(config.database_path)
     await storage.initialize()
+    await storage.run_maintenance()
     bot = Bot(config.bot_token)
     await configure_owner_menu(bot, config.owner_id)
     dispatcher = create_dispatcher(bot, storage, config.owner_id)

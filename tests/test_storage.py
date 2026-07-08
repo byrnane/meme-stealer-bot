@@ -37,6 +37,28 @@ async def test_expired_pending_text_is_discarded(tmp_path) -> None:
     assert await storage.pop_pending_text(1) is None
 
 
+async def test_cleanup_expired_pending_text_removes_only_expired_rows(tmp_path) -> None:
+    storage = Storage(tmp_path / "bot.sqlite3")
+    await storage.initialize()
+    await storage.set_pending_text(1, RichText("старый", []))
+    await storage.set_pending_text(2, RichText("свежий", []))
+    now = datetime.now(UTC)
+    expired = (now - timedelta(seconds=1)).isoformat()
+    fresh = (now + timedelta(minutes=10)).isoformat()
+    async with aiosqlite.connect(storage.path) as db:
+        await db.execute(
+            "UPDATE pending_text SET expires_at = CASE user_id WHEN 1 THEN ? ELSE ? END",
+            (expired, fresh),
+        )
+        await db.commit()
+
+    removed = await storage.cleanup_expired_pending_text(now)
+
+    assert removed == 1
+    assert await storage.get_pending_text(1) is None
+    assert await storage.get_pending_text(2) == RichText("свежий", [])
+
+
 async def test_pending_details_and_draft_count(tmp_path) -> None:
     storage = Storage(tmp_path / "bot.sqlite3")
     await storage.initialize()
@@ -48,6 +70,55 @@ async def test_pending_details_and_draft_count(tmp_path) -> None:
     assert details[0] == RichText("текст", [])
     assert details[1] > datetime.now(UTC)
     assert await storage.count_drafts(1) == 0
+
+
+async def test_cleanup_old_drafts_removes_stale_claimed_and_unclaimed_rows(tmp_path) -> None:
+    storage = Storage(tmp_path / "bot.sqlite3")
+    await storage.initialize()
+    old_open = await storage.create_draft(Draft(None, 1, [MediaItem("photo", "old-open")], None))
+    old_claimed = await storage.create_draft(
+        Draft(None, 1, [MediaItem("photo", "old-claimed")], None)
+    )
+    fresh = await storage.create_draft(Draft(None, 1, [MediaItem("photo", "fresh")], None))
+    assert await storage.claim_draft(old_claimed, 1) is not None
+    now = datetime.now(UTC)
+    old_created_at = (now - timedelta(days=8)).isoformat()
+    async with aiosqlite.connect(storage.path) as db:
+        await db.execute(
+            "UPDATE drafts SET created_at = ? WHERE id IN (?, ?)",
+            (old_created_at, old_open, old_claimed),
+        )
+        await db.commit()
+
+    removed = await storage.cleanup_old_drafts(now=now)
+
+    assert removed == 2
+    assert await storage.get_draft(old_open, 1) is None
+    assert await storage.claim_draft(old_claimed, 1) is None
+    assert await storage.get_draft(fresh, 1) is not None
+
+
+async def test_run_maintenance_cleans_expired_pending_text_and_old_drafts(tmp_path) -> None:
+    storage = Storage(tmp_path / "bot.sqlite3")
+    await storage.initialize()
+    await storage.set_pending_text(1, RichText("старый", []))
+    old_draft = await storage.create_draft(Draft(None, 1, [MediaItem("photo", "old")], None))
+    fresh_draft = await storage.create_draft(Draft(None, 1, [MediaItem("photo", "fresh")], None))
+    expired = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    old_created_at = (datetime.now(UTC) - timedelta(days=8)).isoformat()
+    async with aiosqlite.connect(storage.path) as db:
+        await db.execute("UPDATE pending_text SET expires_at = ?", (expired,))
+        await db.execute(
+            "UPDATE drafts SET created_at = ? WHERE id = ?",
+            (old_created_at, old_draft),
+        )
+        await db.commit()
+
+    await storage.run_maintenance()
+
+    assert await storage.get_pending_text(1) is None
+    assert await storage.get_draft(old_draft, 1) is None
+    assert await storage.get_draft(fresh_draft, 1) is not None
 
 
 async def test_reply_keyboard_removal_is_persisted(tmp_path) -> None:

@@ -9,6 +9,7 @@ import aiosqlite
 from .models import Draft, MediaItem, RichText, UserSettings
 
 PENDING_TEXT_TTL = timedelta(minutes=10)
+DRAFT_RETENTION = timedelta(days=7)
 
 
 class Storage:
@@ -57,6 +58,28 @@ class Storage:
             if "claimed_at" not in draft_columns:
                 await db.execute("ALTER TABLE drafts ADD COLUMN claimed_at TEXT")
             await db.commit()
+
+    async def run_maintenance(self) -> None:
+        await self.cleanup_expired_pending_text()
+        await self.cleanup_old_drafts()
+
+    async def cleanup_expired_pending_text(self, now: datetime | None = None) -> int:
+        cutoff = (now or datetime.now(UTC)).isoformat()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute("DELETE FROM pending_text WHERE expires_at <= ?", (cutoff,))
+            await db.commit()
+            return cursor.rowcount
+
+    async def cleanup_old_drafts(
+        self,
+        older_than: timedelta = DRAFT_RETENTION,
+        now: datetime | None = None,
+    ) -> int:
+        cutoff = ((now or datetime.now(UTC)) - older_than).isoformat()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute("DELETE FROM drafts WHERE created_at <= ?", (cutoff,))
+            await db.commit()
+            return cursor.rowcount
 
     async def get_settings(self, user_id: int) -> UserSettings:
         async with aiosqlite.connect(self.path) as db:

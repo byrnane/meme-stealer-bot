@@ -101,6 +101,26 @@ async def test_text_media_preview_publish_flow_clears_state(tmp_path) -> None:
     assert publish_call.kwargs == {"disable_notification": True}
 
 
+async def test_cancel_clears_pending_text_without_background_timer(tmp_path) -> None:
+    storage = Storage(tmp_path / "bot.sqlite3")
+    await storage.initialize()
+    bot = AsyncMock()
+    app = MemeStealerApp(bot, storage, 1)
+    app.screens = AsyncMock()
+    text_message = AsyncMock()
+    text_message.text = "черновой текст"
+    text_message.entities = []
+    cancel_message = AsyncMock()
+    state = AsyncMock()
+
+    await app.receive_text(text_message)
+    await app.cancel(cancel_message, state)
+
+    assert await storage.get_pending_text(1) is None
+    bot.send_message.assert_not_awaited()
+    app.screens.send_main.assert_awaited_once_with()
+
+
 async def test_publish_error_releases_draft_for_retry(tmp_path) -> None:
     storage = Storage(tmp_path / "bot.sqlite3")
     await storage.initialize()
